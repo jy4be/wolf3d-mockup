@@ -1,0 +1,10 @@
+-std=c2x 
+-pedantic
+-Og 
+-Wall 
+-Wextra 
+-fstack-protector 
+-I 
+include
+-lSLD2
+-lSDL2_image
