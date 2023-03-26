@@ -10,13 +10,16 @@
 #define WINDOW_FLAGS 0
 #define RENDER_FLAGS SDL_RENDERER_ACCELERATED
 #define FRAME_DELAY 16
-
+#define SCALE_FACTOR 4
 #define NAME "Mock3d"
+
+#define TEX_WIDTH 64
+#define TEX_HEIGHT 64
+
+#define sign(x) (x) < 0 ? -1 : 1
 
 #define DYN_ASSERT(asserted, ...) if(!asserted) {fprintf(stderr, __VA_ARGS__); exit(-1);}
 
-
-#define sign(x) (x) < 0 ? -1 : 1
 
 typedef union __attribute__((packed)){
     struct __attribute__((packed)){
@@ -67,6 +70,7 @@ struct Player_S {
     v2f_t plane;
 } player;
 
+bool keys[4] = {0};
 
 uint8_t map_data[8][8] =
     {{1,2,1,2,1,2,1,1},
@@ -78,10 +82,37 @@ uint8_t map_data[8][8] =
      {1,0,0,0,0,0,0,1},
      {1,1,1,2,1,3,1,1}};
 
-bool keys[4] = {0};
+pixel_t textures[TEX_HEIGHT * TEX_WIDTH][4];
 
+
+void generate_textures(pixel_t textures[TEX_HEIGHT * TEX_WIDTH][4]);
 void process_input(struct Window_Data_S *window_data);
 void render(screen_t *screen);
+
+void generate_textures(pixel_t textures[TEX_HEIGHT * TEX_WIDTH][4]){
+    for (int tex_i = 0; tex_i < 4; tex_i++) {
+        for( uint32_t tex_coord = 0; tex_coord < TEX_HEIGHT * TEX_WIDTH; tex_coord++){
+            uint32_t grad256 = ((256 * tex_coord)  / (TEX_HEIGHT * TEX_WIDTH));
+            textures[tex_coord][0] = 
+                ((tex_coord * tex_coord) / (TEX_HEIGHT * TEX_HEIGHT)) -
+                ((tex_coord * tex_coord) % (TEX_HEIGHT * TEX_HEIGHT)) == 0 ?
+                    (pixel_t) {.r = 255, .g = 0, .b = 0} :
+                    (pixel_t) {0};
+            textures[tex_coord][1] =
+                (tex_coord / TEX_HEIGHT) -
+                (tex_coord % TEX_HEIGHT) == 0 ?
+                    (pixel_t) {.r = 255, .g = 0, .b = 0} :
+                    (pixel_t) {0};
+            textures[tex_coord][2] =
+                (pixel_t) {.r = grad256, .g = grad256, .b = grad256};
+            textures[tex_coord][3] =
+                (((tex_coord / TEX_HEIGHT) % 16 && (tex_coord % TEX_HEIGHT) % 16)) ?
+                    (pixel_t) {.r = 255, .g = 0, .b = 0} :
+                    (pixel_t) {0};
+        }
+    }
+
+}
 
 void process_input(struct Window_Data_S *window_data) {
     SDL_Event event;
@@ -208,34 +239,62 @@ void render(screen_t *screen) {
                 hit = true;
         }
 
-        double perp_wall_dist;
-        if (side == HORIZONTAL) 
-            perp_wall_dist = (side_dist.x - delta_dist.x);
-        else           
-            perp_wall_dist = (side_dist.y - delta_dist.y);
+        double perp_wall_dist =
+            (side == HORIZONTAL) ?
+                (side_dist.x - delta_dist.x):
+                (side_dist.y - delta_dist.y);
+
+        int32_t line_height = (int) (HEIGHT / perp_wall_dist);
+
+        int32_t line_top, line_bottom;
+        if(perp_wall_dist <= 1) {
+            line_top    = 0;
+            line_bottom = HEIGHT -1;
+        }
+        else {
+            line_top    = -line_height/2 + HEIGHT/2;
+            line_bottom =  line_height/2 + HEIGHT/2;
+        }
+
+        int tex_index = map_data[grid_pos.x][grid_pos.y] -1;
+
+        double wall_x = 
+            (side == HORIZONTAL) ?
+                player.pos.y + perp_wall_dist * ray_dir.y :
+                player.pos.x + perp_wall_dist * ray_dir.x;
+        wall_x -= floor(wall_x);
+
+        int tex_x = (int) (wall_x * (double)TEX_WIDTH);
+
+        if(side == HORIZONTAL && ray_dir.x > 0) tex_x = TEX_WIDTH - tex_x -1;
+        if(side == VERTICAL   && ray_dir.y < 0) tex_x = TEX_WIDTH - tex_x -1;
+
+        double tex_step = 1.0 * TEX_HEIGHT / line_height;
+        double tex_pos = (line_top - HEIGHT/ 2 + line_height / 2) * tex_step;
 
 
-        int16_t line_height = (int) (HEIGHT / perp_wall_dist);
-
-        int16_t draw_start = -line_height/2 + HEIGHT/2;
-        if(draw_start < 0) draw_start = 0;
-        int16_t draw_end = line_height/2 + HEIGHT/2;
-        if(draw_end > HEIGHT-1) draw_end = HEIGHT-1;
-
-        pixel_t color;
+        /*pixel_t color;
         switch(map_data[grid_pos.x][grid_pos.y]) {
         case 1: color = (pixel_t){.value = {255,0,0}}; break;
         case 2: color = (pixel_t){.value = {0,0,255}}; break;
         case 3: color = (pixel_t){.value = {0,255,0}}; break;
         }
 
-        if(side == SIDE_VERTICAL) {
+        if(side == VERTICAL) {
             color.r /= 2;
             color.g /= 2;
             color.b /= 2;
-        }
+        }*/
         
-        for (int16_t h = draw_start; h < draw_end; h++) {
+        for (int32_t h = line_top; h < line_bottom; h++) {
+            int tex_y = (int) tex_pos & (TEX_HEIGHT-1);
+            tex_pos += tex_step;
+            pixel_t color = textures[TEX_WIDTH * tex_x + tex_y][tex_index];
+            if(side == VERTICAL) {
+                color.r /= 2;
+                color.g /= 2;
+                color.b /= 2;
+            }  
             screen->pixels[h * WIDTH + column] = color;
         }
 
@@ -243,17 +302,20 @@ void render(screen_t *screen) {
 }
 
 int main (int argv, char **argc) {
-    window_data.width = WIDTH*4;
-    window_data.height = HEIGHT*4;
+    window_data.width = WIDTH*SCALE_FACTOR;
+    window_data.height = HEIGHT*SCALE_FACTOR;
     window_data.name = NAME;
     window_data.window_flags = WINDOW_FLAGS;
     window_data.render_flags = RENDER_FLAGS;
 
     player = (struct Player_S) {
         .pos = {{1,2}}, 
-        .dir={{1,0}},
+        .dir = {{1,0}},
         .plane = {.x = 0,
-                .y = 0.66}};
+                  .y = 0.66}};
+
+    generate_textures(textures);
+
     DYN_ASSERT(!SDL_Init(SDL_INIT_VIDEO), 
                "Unable to initialize SDL, Diagnostic: %s", SDL_GetError());
 
