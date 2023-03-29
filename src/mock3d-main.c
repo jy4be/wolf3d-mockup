@@ -5,12 +5,12 @@
 #include <stdbool.h>
 #include <math.h>
 
-#define WIDTH  320
-#define HEIGHT 180
+#define WIDTH  (320 * 4)
+#define HEIGHT (180 * 4) 
 #define WINDOW_FLAGS 0
 #define RENDER_FLAGS SDL_RENDERER_ACCELERATED
 #define FRAME_DELAY 16
-#define SCALE_FACTOR 4
+#define SCALE_FACTOR 1
 #define NAME "Mock3d"
 
 #define TEX_WIDTH 64
@@ -58,10 +58,10 @@ typedef union {
 
 typedef union {
     struct __attribute__((packed)){
-        uint32_t x;
-        uint32_t y;
+        int32_t x;
+        int32_t y;
     };
-    uint32_t v[2];
+    int32_t v[2];
 } v2i_t;
 
 struct Player_S {
@@ -95,7 +95,7 @@ void generate_textures(pixel_t textures[TEX_HEIGHT * TEX_WIDTH][4]){
             uint32_t grad256 = ((256 * tex_coord)  / (TEX_HEIGHT * TEX_WIDTH));
             textures[tex_coord][0] = 
                 ((tex_coord * tex_coord) / (TEX_HEIGHT * TEX_HEIGHT)) -
-                ((tex_coord * tex_coord) % (TEX_HEIGHT * TEX_HEIGHT)) == 0 ?
+                ((tex_coord % TEX_HEIGHT) * (tex_coord % TEX_HEIGHT)) == 0 ?
                     (pixel_t) {.r = 255, .g = 0, .b = 0} :
                     (pixel_t) {0};
             textures[tex_coord][1] =
@@ -182,10 +182,57 @@ void process_input(struct Window_Data_S *window_data) {
 void render(screen_t *screen) {
     memset(screen, 32, WIDTH * HEIGHT * sizeof(pixel_t));
 
+    /*
+    //Floor and ceiling casting
+    for (int16_t row = HEIGHT/2+1; row < HEIGHT; row++) {
+        v2f_t ray_dir0 = {
+            .x = player.dir.x - player.plane.x,
+            .y = player.dir.y - player.plane.y};
+        v2f_t ray_dir1 = {
+            .x = player.dir.x + player.plane.x,
+            .y = player.dir.y + player.plane.y};
 
+        /*double row_dist = (double) HEIGHT / (2*row - HEIGHT);
+
+        int32_t p = row - HEIGHT / 2;
+        double pos_Z = 0.5 * HEIGHT;
+        double row_dist = pos_Z /p;
+
+        v2f_t floor_step = {
+            .x = row_dist * (ray_dir1.x - ray_dir0.x) / (double)WIDTH,
+            .y = row_dist * (ray_dir1.y - ray_dir0.y) / (double)WIDTH};
+
+        v2f_t floor = {
+            .x = player.pos.x + row_dist * ray_dir0.x,
+            .y = player.pos.y + row_dist * ray_dir0.y};
+
+        for (int16_t x = 0; x < WIDTH; x++) {
+            v2i_t grid = {
+                .x = (int) (floor.x),
+                .y = (int) (floor.y)};
+
+            v2i_t tex_coord = {
+                .x = (int) (TEX_WIDTH * (floor.x - grid.x)) & (TEX_WIDTH -1),
+                .y = (int) (TEX_HEIGHT * (floor.y - grid.y)) & (TEX_HEIGHT -1)};
+
+            floor.x += floor_step.x ;
+            floor.y += floor_step.y / 20;
+
+            uint8_t tex_index = 3;
+            pixel_t color;
+
+            color = textures[TEX_WIDTH * tex_coord.y + tex_coord.x][tex_index];
+            screen->pixels[row * WIDTH + x] = color;
+
+            color = textures[TEX_WIDTH * tex_coord.y + tex_coord.x][tex_index];
+            screen->pixels[(HEIGHT - row -1 ) * WIDTH + x] = color;
+        }
+    }*/
+
+    //Wall casting
     for (int16_t column = 0; column < WIDTH; column++) {
         //Normalise column to values between -1 to 1
-        double camera_x = 2 * column / (double) WIDTH - 1; 
+        double camera_x = 2 * column / (double) (WIDTH) - (double) 1; 
         
         //The direction the ray will travel
         v2f_t ray_dir = {
@@ -256,45 +303,47 @@ void render(screen_t *screen) {
             line_bottom =  line_height/2 + HEIGHT/2;
         }
 
-        int tex_index = map_data[grid_pos.x][grid_pos.y] -1;
+        uint8_t tex_index = map_data[grid_pos.x][grid_pos.y] -1;
 
         double wall_x = 
             (side == HORIZONTAL) ?
-                player.pos.y + perp_wall_dist * ray_dir.y :
-                player.pos.x + perp_wall_dist * ray_dir.x;
+                player.pos.y + perp_wall_dist * ray_dir.y : //Horizontal wall
+                player.pos.x + perp_wall_dist * ray_dir.x;  //Vertical wall
         wall_x -= floor(wall_x);
 
         int tex_x = (int) (wall_x * (double)TEX_WIDTH);
 
+        //Texture Wrap-around
         if(side == HORIZONTAL && ray_dir.x > 0) tex_x = TEX_WIDTH - tex_x -1;
         if(side == VERTICAL   && ray_dir.y < 0) tex_x = TEX_WIDTH - tex_x -1;
 
         double tex_step = 1.0 * TEX_HEIGHT / line_height;
         double tex_pos = (line_top - HEIGHT/ 2 + line_height / 2) * tex_step;
 
-
-        /*pixel_t color;
-        switch(map_data[grid_pos.x][grid_pos.y]) {
-        case 1: color = (pixel_t){.value = {255,0,0}}; break;
-        case 2: color = (pixel_t){.value = {0,0,255}}; break;
-        case 3: color = (pixel_t){.value = {0,255,0}}; break;
-        }
-
-        if(side == VERTICAL) {
-            color.r /= 2;
-            color.g /= 2;
-            color.b /= 2;
-        }*/
-        
+        //Draw vertical Line
         for (int32_t h = line_top; h < line_bottom; h++) {
             int tex_y = (int) tex_pos & (TEX_HEIGHT-1);
             tex_pos += tex_step;
+
             pixel_t color = textures[TEX_WIDTH * tex_x + tex_y][tex_index];
             if(side == VERTICAL) {
                 color.r /= 2;
                 color.g /= 2;
                 color.b /= 2;
             }  
+            screen->pixels[h * WIDTH + column] = color;
+        }
+
+        double x_step = (double)(2*column) / (double)WIDTH -1;
+        for (int32_t h = line_bottom; h < HEIGHT; h++){
+            double y_step = ((double)HEIGHT/2) / (double)((double)HEIGHT/2 - h);
+            double fx = player.pos.x - y_step * (player.dir.x + player.plane.x * x_step);
+            double fz = player.pos.y - y_step * (player.dir.y + player.plane.y * x_step);
+
+            uint32_t tx = TEX_WIDTH * (fx - floor(fx));
+            uint32_t tz = TEX_HEIGHT * (fz - floor(fz));
+
+            pixel_t color = textures[TEX_WIDTH * tx + tz][3];
             screen->pixels[h * WIDTH + column] = color;
         }
 
