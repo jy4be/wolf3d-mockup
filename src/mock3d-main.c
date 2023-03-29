@@ -15,6 +15,9 @@
 
 #define TEX_WIDTH 64
 #define TEX_HEIGHT 64
+#define TEX_COUNT 5
+
+#define NUM_SPRITES 4
 
 #define sign(x) (x) < 0 ? -1 : 1
 
@@ -64,6 +67,11 @@ typedef union {
     int32_t v[2];
 } v2i_t;
 
+typedef struct Sprite_S {
+    v2f_t pos;
+    uint8_t tex_index;
+} sprite_t;
+
 struct Player_S {
     v2f_t pos;
     v2f_t dir;
@@ -82,34 +90,83 @@ uint8_t map_data[8][8] =
      {1,0,0,0,0,0,0,1},
      {1,1,1,2,1,3,1,1}};
 
-pixel_t textures[TEX_HEIGHT * TEX_WIDTH][4];
+pixel_t textures[TEX_HEIGHT * TEX_WIDTH][TEX_COUNT];
 
+sprite_t sprites[NUM_SPRITES] =
+    {{{.x = 1.5, .y = 1.5}, 4},
+     {{.x = 6.5, .y = 1.5}, 4},
+     {{.x = 1.5, .y = 6.5}, 4},
+     {{.x = 6.5, .y = 6.5}, 4}};
 
-void generate_textures(pixel_t textures[TEX_HEIGHT * TEX_WIDTH][4]);
+double z_buffer[WIDTH];
+
+uint32_t sprite_order[NUM_SPRITES];
+double sprite_dist[NUM_SPRITES];
+
+void sort_sprites(uint32_t* order, double* dist, uint32_t amount);
+void generate_textures(pixel_t textures[TEX_HEIGHT * TEX_WIDTH][TEX_COUNT]);
 void process_input(struct Window_Data_S *window_data);
 void render(screen_t *screen);
 
-void generate_textures(pixel_t textures[TEX_HEIGHT * TEX_WIDTH][4]){
-    for (int tex_i = 0; tex_i < 4; tex_i++) {
-        for( uint32_t tex_coord = 0; tex_coord < TEX_HEIGHT * TEX_WIDTH; tex_coord++){
-            uint32_t grad256 = ((256 * tex_coord)  / (TEX_HEIGHT * TEX_WIDTH));
-            textures[tex_coord][0] = 
-                ((tex_coord * tex_coord) / (TEX_HEIGHT * TEX_HEIGHT)) -
-                ((tex_coord % TEX_HEIGHT) * (tex_coord % TEX_HEIGHT)) == 0 ?
-                    (pixel_t) {.r = 255, .g = 0, .b = 0} :
-                    (pixel_t) {0};
-            textures[tex_coord][1] =
-                (tex_coord / TEX_HEIGHT) -
-                (tex_coord % TEX_HEIGHT) == 0 ?
-                    (pixel_t) {.r = 255, .g = 0, .b = 0} :
-                    (pixel_t) {0};
-            textures[tex_coord][2] =
-                (pixel_t) {.r = grad256, .g = grad256, .b = grad256};
-            textures[tex_coord][3] =
-                (((tex_coord / TEX_HEIGHT) % 16 && (tex_coord % TEX_HEIGHT) % 16)) ?
-                    (pixel_t) {.r = 255, .g = 0, .b = 0} :
-                    (pixel_t) {0};
-        }
+static inline int sprite_cmp(const void* a, const void* b) {
+    struct sort_sprite {
+        double dist;
+        uint32_t order;
+    };
+    struct sort_sprite e1 = *((struct sort_sprite*) a);
+    struct sort_sprite e2 = *((struct sort_sprite*) b);
+
+    if (e1.dist > e2.dist) return 1;
+    if (e2.dist > e1.dist) return -1;
+    else return 0;
+}
+
+void sort_sprites(uint32_t* order, double* dist, uint32_t amount) {
+    struct sort_sprite {
+        double dist;
+        uint32_t order;
+    } to_sort[NUM_SPRITES];
+
+    for(int i = 0; i < NUM_SPRITES;i++) {
+        to_sort[i].dist = dist[i];
+        to_sort[i].order = order[i];
+    }
+    qsort(to_sort, NUM_SPRITES, sizeof(struct sort_sprite), sprite_cmp);
+
+    for(int i = 0; i < NUM_SPRITES;i++) {
+        dist[i] = to_sort[amount - i - 1].dist;
+        order[i] = to_sort[amount - i - 1].order;
+    }
+
+}
+
+
+void generate_textures(pixel_t textures[TEX_HEIGHT * TEX_WIDTH][TEX_COUNT]){
+    for( uint32_t tex_coord = 0; tex_coord < TEX_HEIGHT * TEX_WIDTH; tex_coord++){
+        uint32_t grad256 = ((256 * tex_coord)  / (TEX_HEIGHT * TEX_WIDTH));
+        uint32_t circle =
+            ((TEX_HEIGHT / 2 - tex_coord / TEX_HEIGHT) * (TEX_HEIGHT / 2 - tex_coord / TEX_HEIGHT)) +
+            ((TEX_WIDTH / 2 - tex_coord % TEX_HEIGHT) * (TEX_WIDTH / 2 - tex_coord % TEX_HEIGHT));
+
+        textures[tex_coord][0] = 
+            circle < TEX_WIDTH * 4  ?
+                (pixel_t) {.r = 255, .g = 0, .b = 0} :
+                (pixel_t) {0};
+        textures[tex_coord][1] =
+            (tex_coord / TEX_HEIGHT) -
+            (tex_coord % TEX_HEIGHT) == 0 ?
+                (pixel_t) {.r = 255, .g = 0, .b = 0} :
+                (pixel_t) {0};
+        textures[tex_coord][2] =
+            (pixel_t) {.r = grad256, .g = grad256, .b = grad256};
+        textures[tex_coord][3] =
+            (((tex_coord / TEX_HEIGHT) % 16 && (tex_coord % TEX_HEIGHT) % 16)) ?
+                (pixel_t) {.r = 255, .g = 0, .b = 0} :
+                (pixel_t) {0};
+        textures[tex_coord][4] =
+            abs((int)(tex_coord % TEX_WIDTH) - (int)TEX_WIDTH/2) < TEX_WIDTH/4 ?
+                (pixel_t) {.r = 0, .g = 128 + tex_coord % 64, .b = 128} :
+                (pixel_t) {0};
     }
 
 }
@@ -182,53 +239,6 @@ void process_input(struct Window_Data_S *window_data) {
 void render(screen_t *screen) {
     memset(screen, 32, WIDTH * HEIGHT * sizeof(pixel_t));
 
-    /*
-    //Floor and ceiling casting
-    for (int16_t row = HEIGHT/2+1; row < HEIGHT; row++) {
-        v2f_t ray_dir0 = {
-            .x = player.dir.x - player.plane.x,
-            .y = player.dir.y - player.plane.y};
-        v2f_t ray_dir1 = {
-            .x = player.dir.x + player.plane.x,
-            .y = player.dir.y + player.plane.y};
-
-        /*double row_dist = (double) HEIGHT / (2*row - HEIGHT);
-
-        int32_t p = row - HEIGHT / 2;
-        double pos_Z = 0.5 * HEIGHT;
-        double row_dist = pos_Z /p;
-
-        v2f_t floor_step = {
-            .x = row_dist * (ray_dir1.x - ray_dir0.x) / (double)WIDTH,
-            .y = row_dist * (ray_dir1.y - ray_dir0.y) / (double)WIDTH};
-
-        v2f_t floor = {
-            .x = player.pos.x + row_dist * ray_dir0.x,
-            .y = player.pos.y + row_dist * ray_dir0.y};
-
-        for (int16_t x = 0; x < WIDTH; x++) {
-            v2i_t grid = {
-                .x = (int) (floor.x),
-                .y = (int) (floor.y)};
-
-            v2i_t tex_coord = {
-                .x = (int) (TEX_WIDTH * (floor.x - grid.x)) & (TEX_WIDTH -1),
-                .y = (int) (TEX_HEIGHT * (floor.y - grid.y)) & (TEX_HEIGHT -1)};
-
-            floor.x += floor_step.x ;
-            floor.y += floor_step.y / 20;
-
-            uint8_t tex_index = 3;
-            pixel_t color;
-
-            color = textures[TEX_WIDTH * tex_coord.y + tex_coord.x][tex_index];
-            screen->pixels[row * WIDTH + x] = color;
-
-            color = textures[TEX_WIDTH * tex_coord.y + tex_coord.x][tex_index];
-            screen->pixels[(HEIGHT - row -1 ) * WIDTH + x] = color;
-        }
-    }*/
-
     //Wall casting
     for (int16_t column = 0; column < WIDTH; column++) {
         //Normalise column to values between -1 to 1
@@ -291,6 +301,8 @@ void render(screen_t *screen) {
                 (side_dist.x - delta_dist.x):
                 (side_dist.y - delta_dist.y);
 
+        z_buffer[column] = perp_wall_dist;
+
         int32_t line_height = (int) (HEIGHT / perp_wall_dist);
 
         int32_t line_top, line_bottom;
@@ -334,19 +346,79 @@ void render(screen_t *screen) {
             screen->pixels[h * WIDTH + column] = color;
         }
 
-        double x_step = (double)(2*column) / (double)WIDTH -1;
-        for (int32_t h = line_bottom; h < HEIGHT; h++){
-            double y_step = ((double)HEIGHT/2) / (double)((double)HEIGHT/2 - h);
-            double fx = player.pos.x - y_step * (player.dir.x + player.plane.x * x_step);
-            double fz = player.pos.y - y_step * (player.dir.y + player.plane.y * x_step);
+        //Floor and Ceiling
 
-            uint32_t tx = TEX_WIDTH * (fx - floor(fx));
-            uint32_t tz = TEX_HEIGHT * (fz - floor(fz));
+        v2f_t floor_ray = {
+            .x = (double)(2*column) / (double)WIDTH -1};
 
-            pixel_t color = textures[TEX_WIDTH * tx + tz][3];
-            screen->pixels[h * WIDTH + column] = color;
+        for (int32_t h = 0; h < (HEIGHT - line_height)/2; h++){
+            floor_ray.y = ((double)HEIGHT/2) / ((double)HEIGHT/2 - (line_bottom + h));
+
+            v2f_t floor_coord = {
+                .x = player.pos.x - floor_ray.y * (player.dir.x + player.plane.x * floor_ray.x),
+                .y = player.pos.y - floor_ray.y * (player.dir.y + player.plane.y * floor_ray.x)};
+
+            v2i_t tex_coord = {
+                .x = TEX_WIDTH * (floor_coord.x - floor(floor_coord.x)),
+                .y = TEX_HEIGHT * (floor_coord.y - floor(floor_coord.y))};
+
+            pixel_t color = textures[TEX_WIDTH * tex_coord.x + tex_coord.y][3];
+            screen->pixels[(h + line_bottom) * WIDTH + column] = color; //floor
+            screen->pixels[(line_top - h) * WIDTH + column] = color;    //ceiling
         }
+    }
 
+    //SPRITE CAST
+    for (uint32_t i = 0; i < NUM_SPRITES; i++) {
+        sprite_order[i] = i;
+        sprite_dist[i] = ((player.pos.x - sprites[i].pos.x) * (player.pos.x - sprites[i].pos.x) +
+                          (player.pos.y - sprites[i].pos.y) * (player.pos.y - sprites[i].pos.y));
+    }
+    sort_sprites(sprite_order, sprite_dist, NUM_SPRITES);
+
+    //Project and draw Sprites
+    for(uint32_t i = 0; i < NUM_SPRITES; i++) {
+        v2f_t rel_sprite = {
+            .x = sprites[sprite_order[i]].pos.x - player.pos.x,
+            .y = sprites[sprite_order[i]].pos.y - player.pos.y};
+        
+        double inv_det = 1.0 / (player.plane.x * player.dir.y - 
+                                player.dir.x * player.plane.y);
+
+        v2f_t trans_pos = {
+            .x = inv_det * (player.dir.y * rel_sprite.x - player.dir.x * rel_sprite.y),
+            .y = inv_det * (-player.plane.y * rel_sprite.x + player.plane.x * rel_sprite.y)};
+
+        int32_t sprite_screen_x = (int) ((WIDTH/2) * (1 + trans_pos.x / trans_pos.y));
+
+        int32_t sprite_height   = abs((int)(HEIGHT / trans_pos.y));
+        int32_t draw_start_y = -sprite_height / 2 + HEIGHT / 2;
+        if(draw_start_y < 0) draw_start_y = 0;
+        int32_t draw_end_y = sprite_height / 2 + HEIGHT / 2;
+        if(draw_end_y >= HEIGHT) draw_end_y = HEIGHT - 1;
+
+        int32_t sprite_width = abs((int) (HEIGHT / trans_pos.y));
+        int32_t draw_start_x = -sprite_width / 2 + sprite_screen_x;
+        if(draw_start_x < 0) draw_start_x = 0;
+        int32_t draw_end_x = sprite_width / 2 + sprite_screen_x;
+        if(draw_end_x >= WIDTH) draw_end_x = WIDTH - 1;
+
+        for (int32_t column = draw_start_x; column < draw_end_x; column++) {
+            int tex_x = (int) (256 * (column - (-sprite_width / 2 + sprite_screen_x)) * 
+                                TEX_WIDTH / sprite_width) / 256;
+
+            if(trans_pos.y > 0 && column > 0 && column < WIDTH && trans_pos.y < z_buffer[column]) {
+                for(int32_t y = draw_start_y; y < draw_end_y; y++) {
+                    int32_t d = (y) * 256 - HEIGHT * 128 + sprite_height * 128;
+                    int32_t tex_y = ((d * TEX_HEIGHT) / sprite_height) / 256;
+                    pixel_t color = 
+                        textures[TEX_WIDTH * tex_y + tex_x][sprites[sprite_order[i]].tex_index];
+                    if(!(color.r == 0 && color.g == 0 && color.b == 0))
+                        screen->pixels[y * WIDTH + column] = color;
+                }
+            }
+
+        }
     }
 }
 
