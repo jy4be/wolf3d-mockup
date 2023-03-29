@@ -10,7 +10,7 @@ SOURCE_DIRS = $(LIBRARY_SRC) src
 TESTS = 
 
 CFLAGS = -std=c2x -Wall -Wextra -fstack-protector -I $(IDIR) -lSDL2 -lSDL2_image
-LDFLAGS = -I $(IDIR) -L$(BUILDDIR) -lSDL2 -lSDL2_image
+LDFLAGS = -I $(IDIR) -L$(BUILDDIR) -lSDL2 -lSDL2_image -lm
 OPTIMIZATION = -Og
 
 TESTPATH = $(BUILDDIR)/$(TESTDIR)
